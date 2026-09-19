@@ -1,6 +1,7 @@
 package com.clearing.netting.adapter.out.persistence.entity;
 
 import com.clearing.netting.domain.model.NettingRunStatus;
+import com.clearing.netting.domain.model.NettingStage;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -28,6 +29,10 @@ public class NettingRunJpaEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private NettingRunStatus status;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 32)
+    private NettingStage stage;
 
     @Column(nullable = false)
     private Instant createdAt;
@@ -65,6 +70,14 @@ public class NettingRunJpaEntity {
 
     public void setStatus(NettingRunStatus status) {
         this.status = status;
+    }
+
+    public NettingStage getStage() {
+        return stage;
+    }
+
+    public void setStage(NettingStage stage) {
+        this.stage = stage;
     }
 
     public Instant getCreatedAt() {

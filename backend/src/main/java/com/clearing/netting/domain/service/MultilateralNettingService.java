@@ -18,11 +18,22 @@ import java.util.Set;
 /**
  * Pure domain service: multilateral netting for a single currency.
  * Positive netAmount = receivable, negative = payable. Sum must be zero.
+ *
+ * Split into {@link #validate} (校验阶段) and {@link #calculate} (计算阶段)
+ * so the application can persist which phase a run is in.
  */
 public class MultilateralNettingService {
 
     public List<NetPosition> net(
             String runId,
+            String currency,
+            List<TradeObligation> openObligations,
+            Map<String, Member> membersById) {
+        validate(currency, openObligations, membersById);
+        return calculate(runId, currency, openObligations);
+    }
+
+    public void validate(
             String currency,
             List<TradeObligation> openObligations,
             Map<String, Member> membersById) {
@@ -59,6 +70,18 @@ public class MultilateralNettingService {
             if (member.getStatus() == MemberStatus.SUSPENDED) {
                 throw new DomainException("SUSPENDED_MEMBER", "suspended member rejected: " + memberId);
             }
+        }
+    }
+
+    public List<NetPosition> calculate(
+            String runId,
+            String currency,
+            List<TradeObligation> openObligations) {
+
+        Set<String> involved = new HashSet<>();
+        for (TradeObligation o : openObligations) {
+            involved.add(o.getPayerMemberId());
+            involved.add(o.getPayeeMemberId());
         }
 
         Map<String, BigDecimal> nets = new HashMap<>();

@@ -1,49 +1,40 @@
 package com.clearing.netting.application;
 
 import com.clearing.netting.domain.exception.DomainException;
-import com.clearing.netting.domain.model.Member;
 import com.clearing.netting.domain.model.NetPosition;
 import com.clearing.netting.domain.model.NettingRun;
 import com.clearing.netting.domain.model.NettingRunStatus;
 import com.clearing.netting.domain.model.ObligationStatus;
 import com.clearing.netting.domain.model.TradeObligation;
-import com.clearing.netting.domain.port.out.MemberRepositoryPort;
 import com.clearing.netting.domain.port.out.NetPositionRepositoryPort;
 import com.clearing.netting.domain.port.out.NettingRunRepositoryPort;
 import com.clearing.netting.domain.port.out.ObligationRepositoryPort;
-import com.clearing.netting.domain.service.MultilateralNettingService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 @Service
 public class NettingApplicationService {
 
     private final NettingRunRepositoryPort runRepository;
     private final ObligationRepositoryPort obligationRepository;
-    private final MemberRepositoryPort memberRepository;
     private final NetPositionRepositoryPort positionRepository;
     private final NettingRunStatusService statusService;
-    private final MultilateralNettingService nettingService;
+    private final NettingRunExecutionWorker executionWorker;
 
     public NettingApplicationService(
             NettingRunRepositoryPort runRepository,
             ObligationRepositoryPort obligationRepository,
-            MemberRepositoryPort memberRepository,
             NetPositionRepositoryPort positionRepository,
-            NettingRunStatusService statusService) {
+            NettingRunStatusService statusService,
+            NettingRunExecutionWorker executionWorker) {
         this.runRepository = runRepository;
         this.obligationRepository = obligationRepository;
-        this.memberRepository = memberRepository;
         this.positionRepository = positionRepository;
         this.statusService = statusService;
-        this.nettingService = new MultilateralNettingService();
+        this.executionWorker = executionWorker;
     }
 
     @Transactional(readOnly = true)
@@ -69,8 +60,13 @@ public class NettingApplicationService {
         return obligationRepository.findByNettingRunId(runId);
     }
 
+    /**
+     * Creates the batch, commits it as RUNNING in the VALIDATING phase, then
+     * hands the actual work to the background worker. Returns immediately so
+     * the client polls the persisted status; nothing is faked client-side.
+     */
     @Transactional
-    public NettingRunResult execute(LocalDate settleDate, String currency) {
+    public NettingRun execute(LocalDate settleDate, String currency) {
         if (settleDate == null) {
             throw new DomainException("INVALID_DATE", "settleDate is required");
         }
@@ -79,42 +75,22 @@ public class NettingApplicationService {
         }
         String ccy = currency.trim().toUpperCase();
 
+        for (NettingRun unfinished : runRepository.findUnfinished()) {
+            if (unfinished.getSettleDate().equals(settleDate) && unfinished.getCurrency().equals(ccy)) {
+                throw new DomainException("RUN_ALREADY_RUNNING",
+                        "a netting run is already in progress for " + ccy + " on " + settleDate
+                                + ": " + unfinished.getRunId());
+            }
+        }
+
         NettingRun run = NettingRun.create(settleDate, ccy);
         run.markRunning();
-        run = statusService.saveInNewTx(run);
+        // Commit the RUNNING/VALIDATING row in its own transaction BEFORE handing
+        // off to the worker, so the background thread always sees a persisted run.
+        NettingRun saved = statusService.saveInNewTx(run);
 
-        try {
-            List<TradeObligation> opens = obligationRepository.findOpenBySettleDateAndCurrency(settleDate, ccy);
-            Set<String> memberIds = new HashSet<>();
-            for (TradeObligation o : opens) {
-                memberIds.add(o.getPayerMemberId());
-                memberIds.add(o.getPayeeMemberId());
-            }
-            Map<String, Member> members = new HashMap<>();
-            for (Member m : memberRepository.findByIds(memberIds)) {
-                members.put(m.getMemberId(), m);
-            }
-
-            List<NetPosition> positions = nettingService.net(run.getRunId(), ccy, opens, members);
-
-            for (TradeObligation o : opens) {
-                o.markNetted(run.getRunId());
-            }
-            obligationRepository.saveAll(opens);
-            positionRepository.saveAll(positions);
-
-            run.markCompleted();
-            run = runRepository.save(run);
-            return new NettingRunResult(run, positions, opens);
-        } catch (DomainException ex) {
-            run.markFailed(ex.getMessage());
-            statusService.saveInNewTx(run);
-            throw ex;
-        } catch (RuntimeException ex) {
-            run.markFailed(ex.getMessage() == null ? "unexpected error" : ex.getMessage());
-            statusService.saveInNewTx(run);
-            throw new DomainException("NETTING_FAILED", ex.getMessage());
-        }
+        executionWorker.run(saved.getRunId(), settleDate, ccy);
+        return saved;
     }
 
     @Transactional
@@ -136,8 +112,5 @@ public class NettingApplicationService {
         }
         obligationRepository.saveAll(obligations);
         return run;
-    }
-
-    public record NettingRunResult(NettingRun run, List<NetPosition> positions, List<TradeObligation> obligations) {
     }
 }

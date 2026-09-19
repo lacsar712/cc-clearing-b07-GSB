@@ -11,4 +11,10 @@ public interface NettingRunRepositoryPort {
     Optional<NettingRun> findById(String runId);
 
     List<NettingRun> findAllOrderByCreatedAtDesc();
+
+    /**
+     * Runs that never reached a terminal state (CREATED/RUNNING).
+     * Used at startup to recover batches interrupted by a server restart.
+     */
+    List<NettingRun> findUnfinished();
 }
