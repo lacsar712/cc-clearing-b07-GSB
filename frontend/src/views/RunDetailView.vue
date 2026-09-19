@@ -19,18 +19,31 @@
         <el-descriptions :column="2" border>
           <el-descriptions-item label="Run ID"><span class="mono">{{ detail.run.runId }}</span></el-descriptions-item>
           <el-descriptions-item label="状态">
-            <el-tag :type="detail.run.status === 'COMPLETED' ? 'success' : detail.run.status === 'FAILED' ? 'danger' : 'info'">
-              {{ detail.run.status }}
-            </el-tag>
+            <el-tag :type="statusTagType(detail.run.status)">{{ statusLabel(detail.run.status) }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="交割日">{{ detail.run.settleDate }}</el-descriptions-item>
           <el-descriptions-item label="币种">{{ detail.run.currency }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ formatTime(detail.run.createdAt) }}</el-descriptions-item>
-          <el-descriptions-item label="ΣnetAmount">{{ detail.sumNetAmount }}</el-descriptions-item>
+          <el-descriptions-item v-if="isActive(detail.run.status)" label="当前阶段">
+            <span>{{ stageText(detail.run.stage) }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item v-else label="ΣnetAmount">{{ detail.sumNetAmount }}</el-descriptions-item>
           <el-descriptions-item v-if="detail.run.failureReason" label="失败原因" :span="2">
-            {{ detail.run.failureReason }}
+            <span class="failure-text">{{ detail.run.failureReason }}</span>
           </el-descriptions-item>
         </el-descriptions>
+
+        <!-- 进行中：与列表/轧差页同一套服务端阶段 -->
+        <el-alert
+          v-if="isActive(detail.run.status)"
+          class="progress-alert"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="`批次进行中 · ${stageShort(detail.run.stage)}`"
+          :description="stageText(detail.run.stage)"
+          data-testid="detail-running"
+        />
 
         <h3 style="margin:20px 0 10px">净头寸</h3>
         <el-table :data="detail.positions" stripe>
@@ -57,11 +70,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import api from '../api/client'
 import { useAuthStore } from '../stores/auth'
+
+const POLL_INTERVAL_MS = 1000
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -69,13 +84,63 @@ const loading = ref(false)
 const settling = ref(false)
 const detail = ref(null)
 
+let pollTimer = null
+
 const alreadySettled = computed(() =>
   (detail.value?.obligations || []).every((o) => o.status === 'SETTLED') &&
   (detail.value?.obligations || []).length > 0
 )
 
+function isActive(status) {
+  return status === 'RUNNING' || status === 'CREATED'
+}
+
+function statusTagType(status) {
+  if (status === 'COMPLETED') return 'success'
+  if (status === 'FAILED') return 'danger'
+  if (isActive(status)) return 'warning'
+  return 'info'
+}
+
+function statusLabel(status) {
+  if (isActive(status)) return '进行中'
+  return status
+}
+
+function stageText(stage) {
+  switch (stage) {
+    case 'VALIDATING':
+      return '正在校验待轧差义务与会员状态…'
+    case 'CALCULATING':
+      return '校验通过，正在计算多边净头寸…'
+    case 'PERSISTING':
+      return '计算完成，正在写入净头寸并更新义务状态…'
+    default:
+      return '批次已创建，等待服务端开始执行…'
+  }
+}
+
+function stageShort(stage) {
+  if (stage === 'VALIDATING') return '校验中'
+  if (stage === 'CALCULATING') return '计算中'
+  if (stage === 'PERSISTING') return '落库中'
+  return '等待中'
+}
+
 function formatTime(v) {
   return v ? new Date(v).toLocaleString() : '-'
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function startPolling() {
+  stopPolling()
+  pollTimer = setInterval(load, POLL_INTERVAL_MS)
 }
 
 async function load() {
@@ -83,6 +148,11 @@ async function load() {
   try {
     const { data } = await api.get(`/netting-runs/${route.params.id}`)
     detail.value = data
+    if (isActive(data.run.status)) {
+      if (!pollTimer) startPolling()
+    } else {
+      stopPolling()
+    }
   } finally {
     loading.value = false
   }
@@ -100,4 +170,14 @@ async function settle() {
 }
 
 onMounted(load)
+onBeforeUnmount(stopPolling)
 </script>
+
+<style scoped>
+.progress-alert {
+  margin-top: 16px;
+}
+.failure-text {
+  color: var(--el-color-danger);
+}
+</style>

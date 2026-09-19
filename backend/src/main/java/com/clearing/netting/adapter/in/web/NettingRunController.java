@@ -5,6 +5,7 @@ import com.clearing.netting.application.NettingApplicationService;
 import com.clearing.netting.domain.model.NetPosition;
 import com.clearing.netting.domain.model.NettingRun;
 import com.clearing.netting.domain.model.NettingRunStatus;
+import com.clearing.netting.domain.model.NettingStage;
 import com.clearing.netting.domain.model.ObligationStatus;
 import com.clearing.netting.domain.model.TradeObligation;
 import jakarta.validation.Valid;
@@ -39,15 +40,15 @@ public class NettingRunController {
         return nettingService.listRuns().stream().map(RunResponse::from).collect(Collectors.toList());
     }
 
+    /**
+     * Accepts the request, persists the run in RUNNING state and returns
+     * immediately. The client polls GET /{id} until a terminal state.
+     */
     @PostMapping
-    public ExecuteResponse execute(@Valid @RequestBody ExecuteRequest request) {
+    public RunResponse execute(@Valid @RequestBody ExecuteRequest request) {
         AuthContext.requireOperator();
-        NettingApplicationService.NettingRunResult result =
-                nettingService.execute(request.settleDate(), request.currency());
-        return new ExecuteResponse(
-                RunResponse.from(result.run()),
-                result.positions().stream().map(PositionResponse::from).collect(Collectors.toList()),
-                sumNet(result.positions()));
+        NettingRun run = nettingService.execute(request.settleDate(), request.currency());
+        return RunResponse.from(run);
     }
 
     @GetMapping("/{id}")
@@ -89,6 +90,8 @@ public class NettingRunController {
             LocalDate settleDate,
             String currency,
             NettingRunStatus status,
+            NettingStage stage,
+            Instant stageUpdatedAt,
             Instant createdAt,
             String failureReason) {
         static RunResponse from(NettingRun r) {
@@ -97,6 +100,8 @@ public class NettingRunController {
                     r.getSettleDate(),
                     r.getCurrency(),
                     r.getStatus(),
+                    r.getStage(),
+                    r.getStageUpdatedAt(),
                     r.getCreatedAt(),
                     r.getFailureReason());
         }
@@ -134,9 +139,6 @@ public class NettingRunController {
                     o.getAmount(),
                     o.getStatus());
         }
-    }
-
-    public record ExecuteResponse(RunResponse run, List<PositionResponse> positions, BigDecimal sumNetAmount) {
     }
 
     public record RunDetailResponse(

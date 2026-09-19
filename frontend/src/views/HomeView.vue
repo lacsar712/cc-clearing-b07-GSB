@@ -33,7 +33,13 @@
         <el-table-column prop="currency" label="币种" width="90" />
         <el-table-column prop="status" label="状态" width="120">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
+            <el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="失败原因" min-width="180">
+          <template #default="{ row }">
+            <span v-if="row.failureReason" class="failure-text">{{ row.failureReason }}</span>
+            <span v-else style="color:var(--muted)">-</span>
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" min-width="180">
@@ -61,8 +67,13 @@ const currencies = computed(() => [...new Set(opens.value.map((o) => o.currency)
 function statusType(s) {
   if (s === 'COMPLETED') return 'success'
   if (s === 'FAILED') return 'danger'
-  if (s === 'RUNNING') return 'warning'
+  if (s === 'RUNNING' || s === 'CREATED') return 'warning'
   return 'info'
+}
+
+function statusLabel(s) {
+  if (s === 'RUNNING' || s === 'CREATED') return '进行中'
+  return s
 }
 
 function formatTime(v) {
@@ -106,5 +117,8 @@ onMounted(load)
   .summary {
     grid-template-columns: 1fr;
   }
+}
+.failure-text {
+  color: var(--el-color-danger);
 }
 </style>

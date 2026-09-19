@@ -1,6 +1,7 @@
 package com.clearing.netting.adapter.out.persistence.entity;
 
 import com.clearing.netting.domain.model.NettingRunStatus;
+import com.clearing.netting.domain.model.NettingStage;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -34,6 +35,16 @@ public class NettingRunJpaEntity {
 
     @Column(length = 512)
     private String failureReason;
+
+    /**
+     * Current server-side execution stage while status = RUNNING; null for terminal states.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 16)
+    private NettingStage stage;
+
+    @Column
+    private java.time.Instant stageUpdatedAt;
 
     public String getRunId() {
         return runId;
@@ -81,5 +92,21 @@ public class NettingRunJpaEntity {
 
     public void setFailureReason(String failureReason) {
         this.failureReason = failureReason;
+    }
+
+    public NettingStage getStage() {
+        return stage;
+    }
+
+    public void setStage(NettingStage stage) {
+        this.stage = stage;
+    }
+
+    public java.time.Instant getStageUpdatedAt() {
+        return stageUpdatedAt;
+    }
+
+    public void setStageUpdatedAt(java.time.Instant stageUpdatedAt) {
+        this.stageUpdatedAt = stageUpdatedAt;
     }
 }
